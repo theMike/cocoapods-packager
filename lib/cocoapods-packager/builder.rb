@@ -1,6 +1,6 @@
 module Pod
   class Builder
-    def initialize(platform, static_installer, source_dir, static_sandbox_root, dynamic_sandbox_root, public_headers_root, spec, embedded, mangle, dynamic, config, bundle_identifier, exclude_deps)
+    def initialize(platform, static_installer, source_dir, static_sandbox_root, dynamic_sandbox_root, public_headers_root, spec, embedded, mangle, dynamic, config, bundle_identifier, exclude_deps,xcode_build_options)
       @platform = platform
       @static_installer = static_installer
       @source_dir = source_dir
@@ -182,7 +182,7 @@ module Pod
       if @platform.name == :ios
         options = ios_build_options
       end
-
+      options << ' ' << @xcode_build_options
       xcodebuild(defines, options)
 
       if @mangle
