@@ -15,31 +15,21 @@ module Pod
           ['--embedded',  'Generate embedded frameworks.'],
           ['--library',   'Generate static libraries.'],
           ['--dynamic',   'Generate dynamic framework.'],
-          ['--local',     'Use local state rather than published versions.'],
           ['--bundle-identifier', 'Bundle identifier for dynamic framework'],
           ['--exclude-deps', 'Exclude symbols from dependencies.'],
           ['--configuration', 'Build the specified configuration (e.g. Debug). Defaults to Release'],
           ['--subspecs', 'Only include the given subspecs'],
-          ['--spec-sources=private,https://github.com/CocoaPods/Specs.git', 'The sources to pull dependent ' \
-            'pods from (defaults to https://github.com/CocoaPods/Specs.git)']
+          ['--spec-sources=private,https://github.com/CocoaPods/Specs.git', 'The sources to pull dependant ' \
+            'pods from (defaults to https://github.com/CocoaPods/Specs.git)'],
+          ['--xcodebuild-options', 'Builds options for xcodebuild']
         ]
       end
 
       def initialize(argv)
         @embedded = argv.flag?('embedded')
+        @force = argv.flag?('force')
         @library = argv.flag?('library')
         @dynamic = argv.flag?('dynamic')
-        @local = argv.flag?('local', false)
-        @package_type = if @embedded
-                          :static_framework
-                        elsif @dynamic
-                          :dynamic_framework
-                        elsif @library
-                          :static_library
-                        else
-                          :static_framework
-                        end
-        @force = argv.flag?('force')
         @mangle = argv.flag?('mangle', true)
         @bundle_identifier = argv.option('bundle-identifier', nil)
         @exclude_deps = argv.flag?('exclude-deps', false)
@@ -51,12 +41,11 @@ module Pod
         @subspecs = subspecs.split(',') unless subspecs.nil?
 
         @config = argv.option('configuration', 'Release')
-
+        
         @source_dir = Dir.pwd
-        @is_spec_from_path = false
         @spec = spec_with_path(@name)
-        @is_spec_from_path = true if @spec
-        @spec ||= spec_with_name(@name)
+        @spec = spec_with_name(@name) unless @spec
+        @xcodebuild_options = argv.option('xcodebuild-options',' ')
         super
       end
 
@@ -66,12 +55,11 @@ module Pod
         help! 'podspec has binary-only depedencies, mangling not possible.' if @mangle && binary_only?(@spec)
         help! '--bundle-identifier option can only be used for dynamic frameworks' if @bundle_identifier && !@dynamic
         help! '--exclude-deps option can only be used for static libraries' if @exclude_deps && @dynamic
-        help! '--local option can only be used when a local `.podspec` path is given.' if @local && !@is_spec_from_path
       end
 
       def run
-        if @spec.nil?
-          help! "Unable to find a podspec with path or name `#{@name}`."
+        if @path.nil? || @spec.nil?
+          help! 'Unable to find a podspec with path or name.'
           return
         end
 
@@ -94,11 +82,12 @@ module Pod
 
         if @dynamic
           dynamic_sandbox = build_dynamic_sandbox(static_sandbox, static_installer)
-          install_dynamic_pod(dynamic_sandbox, static_sandbox, static_installer, platform)
+          install_dynamic_pod(dynamic_sandbox, static_sandbox, static_installer)
         end
 
         begin
-          perform_build(platform, static_sandbox, dynamic_sandbox, static_installer)
+          perform_build(platform, static_sandbox, dynamic_sandbox)
+
         ensure # in case the build fails; see Builder#xcodebuild.
           Pathname.new(config.sandbox_root).rmtree
           FileUtils.rm_f('Podfile.lock')
@@ -138,12 +127,13 @@ module Pod
 
         work_dir = Dir.tmpdir + '/cocoapods-' + Array.new(8) { rand(36).to_s(36) }.join
         Pathname.new(work_dir).mkdir
+        `cp #{@path} #{work_dir}`
         Dir.chdir(work_dir)
 
         [target_dir, work_dir]
       end
 
-      def perform_build(platform, static_sandbox, dynamic_sandbox, static_installer)
+      def perform_build(platform, static_sandbox, dynamic_sandbox)
         static_sandbox_root = config.sandbox_root.to_s
 
         if @dynamic
@@ -151,9 +141,8 @@ module Pod
           dynamic_sandbox_root = "#{config.sandbox_root}/#{dynamic_sandbox.root.to_s.split('/').last}"
         end
 
+        UI.puts "CMD line test: "+@xcodebuild_options
         builder = Pod::Builder.new(
-          platform,
-          static_installer,
           @source_dir,
           static_sandbox_root,
           dynamic_sandbox_root,
@@ -164,10 +153,11 @@ module Pod
           @dynamic,
           @config,
           @bundle_identifier,
-          @exclude_deps
+          @exclude_deps,
+          @xcodebuild_options
         )
 
-        builder.build(@package_type)
+        builder.build(platform, @library)
 
         return unless @embedded
         builder.link_embedded_resources
